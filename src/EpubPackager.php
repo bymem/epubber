@@ -126,6 +126,20 @@ class EpubPackager
             }
         }
 
+        // Some files have no "Title:" label at all — instead the title sits on its own
+        // line right after a "----" style separator (often following a copyright/
+        // attribution notice at the top of the file)
+        foreach ($lines as $index => $line) {
+            if (preg_match('/^-{3,}\s*$/', trim($line))) {
+                for ($i = $index + 1; $i < count($lines); $i++) {
+                    $candidate = trim($lines[$i]);
+                    if ($candidate !== '') {
+                        return $candidate;
+                    }
+                }
+            }
+        }
+
         return null;
     }
 
