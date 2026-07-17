@@ -82,6 +82,12 @@ class EpubPackager
             // Try to detect an author credit from the text itself, and let it prefill the prompt
             $detectedAuthor = $this->detectAuthor($storyLines);
 
+            if ($detectedAuthor !== null) {
+                // Some files tuck the author's email into a trailing (...) — strip it, just want the name
+                $detectedAuthor = trim(preg_replace('/\s*\([^()]*\)/', '', $detectedAuthor));
+                $detectedAuthor = $detectedAuthor !== '' ? $detectedAuthor : null;
+            }
+
             $authorPrompt = $detectedAuthor !== null
                 ? "Enter author for '$title' [$detectedAuthor]: "
                 : "Enter author for '$title' (optional): ";
