@@ -67,8 +67,15 @@ class EpubPackager
             }
             echo "\n\n";
 
-            // Get the name for the series
-            $title = Prompt::ask("Enter name for series '$name': ");
+            // Try to detect a title from the text itself, and let it prefill the prompt
+            $detectedTitle = $this->detectTitle($storyLines);
+
+            $titlePrompt = $detectedTitle !== null
+                ? "Enter name for series '$name' [$detectedTitle]: "
+                : "Enter name for series '$name': ";
+
+            $titleInput = Prompt::ask($titlePrompt);
+            $title = $titleInput !== '' ? $titleInput : ($detectedTitle ?? $name);
 
             // Collect multiline description
             $description = Prompt::askMultiline("Enter description for series '$title' (end with an empty line):");
@@ -82,6 +89,21 @@ class EpubPackager
 
         }
 
+    }
+
+    // Look for a "Title:"-style label in the opening lines to suggest as a prefill.
+    // Story text files aren't consistently formatted, so this is a best-effort guess only.
+    private function detectTitle(array $lines): ?string
+    {
+        $pattern = '/^\s*(?:story\s+|book\s+)?title\s*[:\-]\s*(.+?)\s*$/i';
+
+        foreach ($lines as $line) {
+            if (preg_match($pattern, $line, $matches) && $matches[1] !== '') {
+                return $matches[1];
+            }
+        }
+
+        return null;
     }
 
     private function buildPackage($name, $title, $description, $uuid, $files)
