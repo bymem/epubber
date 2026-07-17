@@ -1,1 +1,11 @@
 /books
+.env
+.DS_Store
+
+# Build output — generated per run, not source
+/temp/*
+!/temp/.gitkeep
+
+# Story source text files are personal content, not part of the repo
+/stories/*
+!/stories/.gitkeep

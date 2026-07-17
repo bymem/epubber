@@ -1,45 +1,60 @@
 <?php
 
-$EPUB_Packer = new EPUB_Packager();
-$EPUB_Packer->run();
-
-class EPUB_Packager
+class EpubPackager
 {
-   
-    private $stories;
+    private array $stories;
+    private string $scanFolder;
+    private string $outputFolder;
+    private string $language;
+    private string $projectRoot;
 
-    public function __construct()
+    public function __construct(Config $config, string $projectRoot)
     {
-        $this->stories      = scandir(dirname(__FILE__) . '/stories/');
+        $this->scanFolder   = $config->scanFolder;
+        $this->outputFolder = $config->outputFolder;
+        $this->language     = $config->language;
+        $this->projectRoot  = $projectRoot;
 
+        if (!is_dir($this->scanFolder) || !is_readable($this->scanFolder)) {
+            throw new RuntimeException("Scan folder not found or not readable: {$this->scanFolder}");
+        }
+
+        if (!class_exists('ZipArchive')) {
+            throw new RuntimeException('The PHP zip extension is required (ZipArchive not found).');
+        }
+
+        if (!is_dir($this->outputFolder)) {
+            mkdir($this->outputFolder, 0777, true);
+        }
+
+        $this->stories = scandir($this->scanFolder);
     }
 
-    public function run() 
+    public function run()
     {
-        echo 'Running packager...'. "\n";
+        echo 'Running packager...' . "\n";
 
         // Create an array to hold stories grouped by series
         $series = $this->groupStoriesBySeries($this->stories);
 
-        
-
-        // var_dump($series);
+        if (empty($series)) {
+            echo "No story files matched the expected naming pattern in {$this->scanFolder}.\n";
+            return;
+        }
 
         $this->buildPackages($series);
-
     }
 
-    // Beging building the package
+    // Begin building the package
     private function buildPackages($series)
     {
-        
         foreach ($series as $name => $txtFiles) {
-            
+
             // Get first few lines of the story and show them
             // Then prompt the user for name and description
-            $storyFile = dirname(__FILE__) . '/stories/' . $txtFiles[0];
+            $storyFile = $this->scanFolder . '/' . $txtFiles[0];
             $storyLines = file($storyFile);
-            $storyLines = array_slice($storyLines, 0, 60); // Get first 5 lines
+            $storyLines = array_slice($storyLines, 0, 60); // Get first 60 lines
             echo "First few lines of $txtFiles[0]:\n";
             foreach ($storyLines as $line) {
                 echo $line;
@@ -47,18 +62,10 @@ class EPUB_Packager
             echo "\n\n";
 
             // Get the name for the series
-            $title = readline("Enter name for series '$name': ");
+            $title = Prompt::ask("Enter name for series '$name': ");
 
             // Collect multiline description
-            echo "Enter description for series '$title' (end with an empty line):\n";
-            $description = '';
-            while (true) {
-                $line = readline();  // Read a line of input
-                if (empty($line)) {   // If the line is empty, break the loop
-                    break;
-                }
-                $description .= $line . "\n";  // Append the line to the description
-            }
+            $description = Prompt::askMultiline("Enter description for series '$title' (end with an empty line):");
 
             $uuid = $this->generateUUID();
 
@@ -74,12 +81,13 @@ class EPUB_Packager
     private function buildPackage($name, $title, $description, $uuid, $files)
     {
 
-        // Create a directory for the package
-        $packageDir = dirname(__FILE__) . '/temp/' . $name;
-        if (!is_dir($packageDir)) {
-            mkdir($packageDir, 0777, true);
+        // Create a fresh directory for the package, clearing out any leftovers from a previous run
+        $packageDir = $this->outputFolder . '/' . $name;
+        if (is_dir($packageDir)) {
+            $this->deleteDirectory($packageDir);
         }
-        
+        mkdir($packageDir, 0777, true);
+
         $this->createMimetype($packageDir);
         $this->createMetaInf($packageDir);
         $this->createStylesheet($packageDir);
@@ -93,16 +101,38 @@ class EPUB_Packager
 
     }
 
+    // Recursively delete a directory and its contents
+    private function deleteDirectory(string $dir)
+    {
+        $items = scandir($dir);
+
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+
+            $path = $dir . '/' . $item;
+
+            if (is_dir($path)) {
+                $this->deleteDirectory($path);
+            } else {
+                unlink($path);
+            }
+        }
+
+        rmdir($dir);
+    }
+
     // Export text files to HTML format
     private function exportTextToHTML($packageDir, $title, $description, $textFiles)
     {
         $htmlFiles = [];
 
-        $htmlCount = 000;
+        $htmlCount = 0;
 
         foreach ($textFiles as $file) {
 
-            $content = file_get_contents(dirname(__FILE__) . '/stories/' . $file);
+            $content = file_get_contents($this->scanFolder . '/' . $file);
 
             // check for chapters in text
             $chapterPattern = '/(Chapter \d+)/i';
@@ -122,8 +152,6 @@ class EPUB_Packager
                 foreach ($chapters as $index => $chapter) {
                     // Create a new HTML file for each chapter
                     $htmlCount++;
-                    // $htmlFile = $packageDir . '/' . str_pad($htmlCount, 3, '0', STR_PAD_LEFT) . '.html';
-                    // $htmlFiles[] = $htmlFile;
 
                     $htmlFile = $packageDir . '/index_html_' . $htmlCount . '.html';
                     $htmlFiles[] = $htmlFile;
@@ -145,11 +173,9 @@ class EPUB_Packager
                 }
 
             } else {
-                
+
                 // Create a new HTML file for the entire text
                 $htmlCount++;
-                // $htmlFile = $packageDir . '/' . str_pad($htmlCount, 3, '0', STR_PAD_LEFT) . '.html';
-                // $htmlFiles[] = $htmlFile;
 
                 $htmlFile = $packageDir . '/index_html_' . $htmlCount . '.html';
                 $htmlFiles[] = $htmlFile;
@@ -167,8 +193,8 @@ class EPUB_Packager
 </html>';
 
                 file_put_contents($htmlFile, $htmlContent);
-            }            
-            
+            }
+
         }
 
         return $htmlFiles;
@@ -243,7 +269,7 @@ class EPUB_Packager
         <dc:title>' . htmlspecialchars($title) . '</dc:title>
         <dc:description>' . htmlspecialchars($description) . '</dc:description>
         <dc:identifier id="BookId">' . $uuid . '</dc:identifier>
-        <dc:language>en</dc:language>
+        <dc:language>' . htmlspecialchars($this->language) . '</dc:language>
         <meta name="cover" content="thumbnail.jpg"/>
     </metadata>
     <manifest>
@@ -259,7 +285,7 @@ class EPUB_Packager
         $opfContent .= '        <item id="thumbnail" href="thumbnail.jpg" media-type="image/jpeg"/>' . "\n"; ;
 
         $opfContent .= '    </manifest>
-    <spine toc="ncx">>
+    <spine toc="ncx">
 ';
 
         foreach ($htmlFiles as $index => $file) {
@@ -276,7 +302,7 @@ class EPUB_Packager
     private function createEPUB($packageDir, $title)
     {
         $zip = new ZipArchive();
-        $epubFile = dirname(__FILE__) . '/temp/' . $title . '.epub';
+        $epubFile = $this->outputFolder . '/' . $title . '.epub';
 
         if ($zip->open($epubFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
             $zip->addFile($packageDir . '/mimetype', 'mimetype');
@@ -381,7 +407,7 @@ class EPUB_Packager
 
     // Copy thumbnail image
     private function copyThumbnail($packageDir) {
-        $thumbnailSrc = dirname(__FILE__) . '/thumbnail.jpg';
+        $thumbnailSrc = $this->projectRoot . '/thumbnail.jpg';
         $thumbnailDest = $packageDir . '/thumbnail.jpg';
 
         if (file_exists($thumbnailSrc)) {
@@ -431,47 +457,35 @@ class EPUB_Packager
                 continue;
             }
 
-            // echo 'Processing: ' . $story . "\n";
-
             // First regex: Matches filenames like "amber1.txt", "amanda4.txt"
             if (preg_match('/^([a-zA-Z]+)(\d+)\.txt$/i', $story, $matches)) {
-                // var_dump($matches);  // For debugging
-
                 $seriesName = $matches[1];  // Series name (e.g., "amber", "amanda")
-                $part = $matches[2];        // The number (e.g., "1", "4")
 
-                // If the series doesn't exist in the array, initialize it
                 if (!isset($grouped[$seriesName])) {
                     $grouped[$seriesName] = [];
                 }
 
-                // Add the file to the series group
                 $grouped[$seriesName][] = $story;
             }
             // Second regex: Matches filenames like "amanda-4.txt", "amber-ch1.txt"
             else if (preg_match('/^([a-zA-Z]+)(?:[-_](ch\d+|part\d+|\d+))?\.txt$/i', $story, $matches)) {
-                // var_dump($matches);  // For debugging
-
                 $seriesName = $matches[1];  // Series name (e.g., "amber", "amanda")
-                $part = isset($matches[2]) ? $matches[2] : null; // Chapter/part info (e.g., "ch1", "part2")
 
-                // If the series doesn't exist in the array, initialize it
                 if (!isset($grouped[$seriesName])) {
                     $grouped[$seriesName] = [];
                 }
 
-                // Add the file to the series group
                 $grouped[$seriesName][] = $story;
-            } else {
-                // echo "No match for: $story\n";  // Debugging output
             }
         }
 
-        // var_dump($grouped);  // For debugging
+        // Sort files within each series naturally, so e.g. "amber2.txt" comes before "amber10.txt"
+        foreach ($grouped as $seriesName => $files) {
+            natcasesort($files);
+            $grouped[$seriesName] = array_values($files);
+        }
 
         return $grouped;
     }
 
-
 }
-    
