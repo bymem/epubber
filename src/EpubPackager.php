@@ -103,11 +103,12 @@ class EpubPackager
                 $tags = $this->promptForTags();
             }
 
-            // Author/copyright note between the first pair of "----" separators becomes its
-            // own dedicated first page, separate from chapter 1 — some e-readers only start
-            // tracking reading progress once you've moved past the first spine item, so
-            // lumping it in with real chapter 1 content was breaking that.
-            $authorNote = $this->detectAuthorNote($storyLines);
+            // Everything up to and including the author/copyright note's closing "----"
+            // separator becomes its own dedicated first page, separate from chapter 1 —
+            // some e-readers only start tracking reading progress once you've moved past
+            // the first spine item, so lumping it in with real chapter 1 content was
+            // breaking that.
+            [$authorNote, ] = $this->splitAuthorNote($storyLines);
 
             $uuid = $this->generateUUID();
 
@@ -202,61 +203,40 @@ class EpubPackager
         return array_values(array_filter($tags, fn($tag) => $tag !== ''));
     }
 
-    // Look for an author/copyright note sitting between the FIRST pair of "----" style
-    // separators (as opposed to detectTitle(), which looks after the LAST one).
-    private function detectAuthorNote(array $lines): ?string
+    // Split a file at the author/copyright note's closing "----" separator (the second
+    // "----" line found — the first pair of separators, as opposed to detectTitle(), which
+    // looks after the LAST one). Everything from the start of the file up to and including
+    // that separator becomes the notice page; everything after continues on as normal.
+    // Returns [noticeText or null, remaining content after the split].
+    private function splitAuthorNote(array $lines): array
     {
-        $firstSeparator = null;
-        $secondSeparator = null;
+        // Normalize away any trailing newlines so this works the same whether $lines came
+        // from file() (which keeps them) or explode("\n", ...) (which doesn't)
+        $lines = array_map(fn($line) => rtrim($line, "\r\n"), $lines);
+
+        $separatorCount = 0;
+        $splitIndex = null;
 
         foreach ($lines as $index => $line) {
             if (preg_match('/^-{3,}\s*$/', trim($line))) {
-                if ($firstSeparator === null) {
-                    $firstSeparator = $index;
-                } else {
-                    $secondSeparator = $index;
+                $separatorCount++;
+                if ($separatorCount === 2) {
+                    $splitIndex = $index;
                     break;
                 }
             }
         }
 
-        if ($firstSeparator === null || $secondSeparator === null) {
-            return null;
+        if ($splitIndex === null) {
+            return [null, implode("\n", $lines)];
         }
 
-        $noteLines = array_slice($lines, $firstSeparator + 1, $secondSeparator - $firstSeparator - 1);
-        $note = trim(implode('', $noteLines));
+        $noticeLines    = array_slice($lines, 0, $splitIndex + 1);
+        $remainingLines = array_slice($lines, $splitIndex + 1);
 
-        return $note !== '' ? $note : null;
-    }
+        $notice = trim(implode("\n", $noticeLines));
 
-    // Remove the author/copyright note (and its bounding "----" separators) from a file's own
-    // content, since it now lives on its own dedicated first page instead
-    private function stripAuthorNote(string $content): string
-    {
-        $lines = explode("\n", $content);
-
-        $firstSeparator = null;
-        $secondSeparator = null;
-
-        foreach ($lines as $index => $line) {
-            if (preg_match('/^-{3,}\s*$/', trim($line))) {
-                if ($firstSeparator === null) {
-                    $firstSeparator = $index;
-                } else {
-                    $secondSeparator = $index;
-                    break;
-                }
-            }
-        }
-
-        if ($firstSeparator === null || $secondSeparator === null) {
-            return $content;
-        }
-
-        array_splice($lines, $firstSeparator, $secondSeparator - $firstSeparator + 1);
-
-        return implode("\n", $lines);
+        return [$notice !== '' ? $notice : null, implode("\n", $remainingLines)];
     }
 
     // Create a dedicated first page for the author/copyright note, formatted as real paragraphs
@@ -338,7 +318,7 @@ class EpubPackager
         foreach ($textFiles as $file) {
 
             $content = file_get_contents($this->scanFolder . '/' . $file);
-            $content = $this->stripAuthorNote($content);
+            [, $content] = $this->splitAuthorNote(explode("\n", $content));
 
             // check for chapters in text
             $chapterPattern = '/(Chapter \d+)/i';
