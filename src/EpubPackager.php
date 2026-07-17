@@ -442,56 +442,41 @@ class EpubPackager
 
     private function wrapTextInParagraphs($text)
     {
+        // Clean up stray divider lines some files use
+        $text = str_replace('_________________________________________', "", $text);
 
-        // Clean up the text
-        $text = str_replace('_________________________________________', "", $text); // Convert \r to \n
+        // "***" is a scene-break divider — reflow the prose on every side of it the same way
+        // (there's no reason the text before a break should be treated differently than the
+        // text after; both are just paragraphs of hard-wrapped prose from the source file)
+        $parts = explode('***', $text);
+        $html = array_map([$this, 'reflowParagraphs'], $parts);
 
-        // Check if the text contains the *** pattern
-        if (strpos($text, '***') !== false) {
-            // Split the text at the first occurrence of ***
-            $splitText = explode("***", $text, 3);
+        return implode('<hr/>', $html);
+    }
 
-            $beforeParagraphs = '';
+    // Split on blank lines to find paragraph boundaries, then join each paragraph's internal
+    // hard-wrapped line breaks (which these text files use to look "prettier" in a plain text
+    // editor, not as real paragraph breaks) into a single flowing line
+    private function reflowParagraphs(string $text): string
+    {
+        $paragraphs = preg_split('/\n\n+/', $text);
+        $wrapped = '';
 
-            // Process the part before the first set of ***
-            // Apply nl2br only before ***
-            if (isset($splitText[0])) {
-                $beforeParagraphs = nl2br(htmlspecialchars($splitText[0])); // Convert newlines to <br> tags
+        foreach ($paragraphs as $paragraph) {
+            $paragraph = trim($paragraph);
+
+            if ($paragraph === '') {
+                continue;
             }
 
-            // Process the part after the first set of ***
-            $afterParagraphs = '';
-            if (isset($splitText[1])) {
-                // Wrap paragraphs in <p> tags after ***
-                $paragraphs = preg_split('/\n\n+/', $splitText[1]);
-                foreach ($paragraphs as $paragraph) {
-                    $paragraph = str_replace("\n", ' ', $paragraph); // Remove internal line breaks
-                    $afterParagraphs .= "<p>" . htmlspecialchars($paragraph) . "</p>\n\n";
-                }
-            }
-
-            // If there's a third part after the second ***
-            if (isset($splitText[2])) {
-                // Wrap paragraphs in <p> tags after the second set of ***
-                $paragraphs = preg_split('/\n\n+/', $splitText[2]);
-                foreach ($paragraphs as $paragraph) {
-                    $paragraph = str_replace("\n", ' ', $paragraph); // Remove internal line breaks
-                    $afterParagraphs .= "<p>" . htmlspecialchars($paragraph) . "</p>\n\n";
-                }
-            }
-
-            // Return the combined result (before *** part with <br>, and after wrapped in <p>)
-            return $beforeParagraphs . "<hr/>" . $afterParagraphs;
-        } else {
-            // If no *** pattern is found, wrap all the text in <p> tags
-            $paragraphs = preg_split('/\n\n+/', $text);
-            $wrappedText = '';
-            foreach ($paragraphs as $paragraph) {
-                $paragraph = str_replace("\n", ' ', $paragraph); // Remove internal line breaks
-                $wrappedText .= "<p>" . htmlspecialchars($paragraph) . "</p>\n\n";
-            }
-            return $wrappedText;
+            // Collapse a hard-wrap and any surrounding spaces into a single space, rather than
+            // just the newline itself (which left doubled-up spaces when the source line had a
+            // trailing space before the wrap, as these files commonly do)
+            $paragraph = preg_replace('/[ \t]*\n[ \t]*/', ' ', $paragraph);
+            $wrapped .= '<p>' . htmlspecialchars($paragraph) . "</p>\n\n";
         }
+
+        return $wrapped;
     }
 
 
