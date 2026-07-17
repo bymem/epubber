@@ -79,6 +79,16 @@ class EpubPackager
             $titleInput = Prompt::ask($titlePrompt);
             $title = $titleInput !== '' ? $titleInput : ($detectedTitle ?? $name);
 
+            // Try to detect an author credit from the text itself, and let it prefill the prompt
+            $detectedAuthor = $this->detectAuthor($storyLines);
+
+            $authorPrompt = $detectedAuthor !== null
+                ? "Enter author for '$title' [$detectedAuthor]: "
+                : "Enter author for '$title' (optional): ";
+
+            $authorInput = Prompt::ask($authorPrompt);
+            $author = $authorInput !== '' ? $authorInput : $detectedAuthor;
+
             // Try to detect a description between the first two "***" markers, and any
             // (comma, separated, tags) living inside it
             $detectedDescription = $this->detectDescription($storyLines);
@@ -117,7 +127,7 @@ class EpubPackager
             echo "Building package for series '$title'...\n";
             echo "Description: $description\n";
 
-            $this->buildPackage($name, $title, $description, $tags, $authorNote, $uuid, $txtFiles);
+            $this->buildPackage($name, $title, $description, $tags, $author, $authorNote, $uuid, $txtFiles);
 
         }
 
@@ -153,6 +163,23 @@ class EpubPackager
                 if ($candidate !== '') {
                     return $candidate;
                 }
+            }
+        }
+
+        return null;
+    }
+
+    // Look for an "Author:"/"Writer:"/"By ..."-style label in the opening lines.
+    // Story text files aren't consistently formatted, so this is a best-effort guess only.
+    // "By" without punctuation is the riskiest of these — it can occasionally false-positive
+    // on a line of prose that happens to start with the word "By".
+    private function detectAuthor(array $lines): ?string
+    {
+        $pattern = '/^\s*(?:author\'?s?\s*name|author|writer|by)\s*[:\-]?\s*(.+?)\s*$/i';
+
+        foreach ($lines as $line) {
+            if (preg_match($pattern, $line, $matches) && $matches[1] !== '') {
+                return $matches[1];
             }
         }
 
@@ -307,7 +334,7 @@ class EpubPackager
         return $noticeFile;
     }
 
-    private function buildPackage($name, $title, $description, $tags, $authorNote, $uuid, $files)
+    private function buildPackage($name, $title, $description, $tags, $author, $authorNote, $uuid, $files)
     {
 
         // Create a fresh directory for the package, clearing out any leftovers from a previous run
@@ -327,7 +354,7 @@ class EpubPackager
 
         $htmlfiles = $this->exportTextToHTML($packageDir, $title, $description, $files);
         $this->createTOC($packageDir, $title, $description, $uuid, $htmlfiles, $noticeFile);
-        $this->createOPF($packageDir, $title, $description, $tags, $uuid, $htmlfiles, $noticeFile);
+        $this->createOPF($packageDir, $title, $description, $tags, $author, $uuid, $htmlfiles, $noticeFile);
 
         $this->createEPUB($packageDir, $title);
 
@@ -463,7 +490,7 @@ class EpubPackager
 
 
     // crate the OPF file
-    private function createOPF($packageDir, $title, $description, $tags, $uuid, $htmlFiles, $noticeFile = null)
+    private function createOPF($packageDir, $title, $description, $tags, $author, $uuid, $htmlFiles, $noticeFile = null)
     {
 
         // remove empty line from the description
@@ -474,13 +501,21 @@ class EpubPackager
     <package version="2.0" unique-identifier="uuid_id" xmlns="http://www.idpf.org/2007/opf">
         <metadata xmlns:opf="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:calibre="http://calibre.kovidgoyal.net/2009/metadata">
         <dc:title>' . htmlspecialchars($title) . '</dc:title>
-        <dc:description>' . htmlspecialchars($description) . '</dc:description>
+';
+
+        // dc:creator with opf:role="aut" is the OPF2 way to credit the author — Calibre and
+        // Kavita both read it as the book's author/writer
+        if ($author !== null) {
+            $opfContent .= '        <dc:creator opf:role="aut">' . htmlspecialchars($author) . '</dc:creator>' . "\n";
+        }
+
+        $opfContent .= '        <dc:description>' . htmlspecialchars($description) . '</dc:description>
         <dc:identifier id="BookId">' . $uuid . '</dc:identifier>
         <dc:language>' . htmlspecialchars($this->language) . '</dc:language>
 ';
 
-        // Tags are represented in the OPF as dc:subject entries — this is what Calibre and
-        // most readers display as "Tags"
+        // Tags are represented in the OPF as dc:subject entries — Calibre calls these "Tags",
+        // and Kavita reads dc:subject specifically as "Genre"
         foreach ($tags as $tag) {
             $opfContent .= '        <dc:subject>' . htmlspecialchars($tag) . '</dc:subject>' . "\n";
         }
