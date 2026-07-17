@@ -59,17 +59,16 @@ class EpubPackager
             // Get first few lines of the story and show them
             // Then prompt the user for name and description
             $storyFile = $this->scanFolder . '/' . $txtFiles[0];
-            $storyAllLines = file($storyFile);
-            $storyLines = array_slice($storyAllLines, 0, 60); // Get first 60 lines for the preview
+            $storyLines = file($storyFile);
+            $storyLines = array_slice($storyLines, 0, 100); // Get first 100 lines
             echo "First few lines of $txtFiles[0]:\n";
             foreach ($storyLines as $line) {
                 echo $line;
             }
             echo "\n\n";
 
-            // Title/description detection scans the whole file, not just the preview slice above —
-            // front-matter (author notes, etc.) can easily push the relevant markers past line 60
-            $detectedTitle = $this->detectTitle($storyAllLines);
+            // Try to detect a title from the text itself, and let it prefill the prompt
+            $detectedTitle = $this->detectTitle($storyLines);
 
             $titlePrompt = $detectedTitle !== null
                 ? "Enter name for series '$name' [$detectedTitle]: "
@@ -80,7 +79,7 @@ class EpubPackager
 
             // Try to detect a description between the first two "***" markers, and any
             // (comma, separated, tags) living inside it
-            $detectedDescription = $this->detectDescription($storyAllLines);
+            $detectedDescription = $this->detectDescription($storyLines);
             $tags = [];
 
             if ($detectedDescription !== null) {
