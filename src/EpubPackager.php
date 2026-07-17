@@ -564,11 +564,22 @@ class EpubPackager
         file_put_contents($packageDir . '/content.opf', $opfContent);
     }
 
+    // Strip characters that are illegal (or awkward) in filenames across common filesystems,
+    // since $title (which may include whatever the user typed or the text detected) is used
+    // directly as the .epub filename
+    private function sanitizeFilename(string $name): string
+    {
+        $name = preg_replace('/[\/\\\\:*?"<>|\x00-\x1F]/', '', $name);
+        $name = trim($name, " .\t\n\r\0\x0B");
+
+        return $name !== '' ? $name : 'untitled';
+    }
+
     // Create the EPUB file
     private function createEPUB($packageDir, $title)
     {
         $zip = new ZipArchive();
-        $epubFile = $this->outputFolder . '/' . $title . '.epub';
+        $epubFile = $this->outputFolder . '/' . $this->sanitizeFilename($title) . '.epub';
 
         if ($zip->open($epubFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
             $zip->addFile($packageDir . '/mimetype', 'mimetype');
