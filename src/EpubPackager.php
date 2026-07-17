@@ -287,6 +287,9 @@ class EpubPackager
     {
         $noticeFile = $packageDir . '/000_notice.html';
 
+        // No paragraph processing here — the note has no blank lines to split on, so running
+        // it through wrapTextInParagraphs() collapsed the whole thing (dashes included) into
+        // one paragraph. Just preserve the line breaks as written instead.
         $htmlContent = '<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
@@ -295,7 +298,7 @@ class EpubPackager
         <link rel="stylesheet" type="text/css" href="style.css"/>
     </head>
     <body>
-        <div class="content">' . $this->wrapTextInParagraphs($noteText) . '</div>
+        <div class="content">' . nl2br(htmlspecialchars($noteText)) . '</div>
     </body>
 </html>';
 
