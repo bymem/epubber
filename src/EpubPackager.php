@@ -230,6 +230,35 @@ class EpubPackager
         return $note !== '' ? $note : null;
     }
 
+    // Remove the author/copyright note (and its bounding "----" separators) from a file's own
+    // content, since it now lives on its own dedicated first page instead
+    private function stripAuthorNote(string $content): string
+    {
+        $lines = explode("\n", $content);
+
+        $firstSeparator = null;
+        $secondSeparator = null;
+
+        foreach ($lines as $index => $line) {
+            if (preg_match('/^-{3,}\s*$/', trim($line))) {
+                if ($firstSeparator === null) {
+                    $firstSeparator = $index;
+                } else {
+                    $secondSeparator = $index;
+                    break;
+                }
+            }
+        }
+
+        if ($firstSeparator === null || $secondSeparator === null) {
+            return $content;
+        }
+
+        array_splice($lines, $firstSeparator, $secondSeparator - $firstSeparator + 1);
+
+        return implode("\n", $lines);
+    }
+
     // Create a dedicated first page for the author/copyright note, formatted as real paragraphs
     private function createNoticePage($packageDir, $title, $noteText): string
     {
@@ -309,6 +338,7 @@ class EpubPackager
         foreach ($textFiles as $file) {
 
             $content = file_get_contents($this->scanFolder . '/' . $file);
+            $content = $this->stripAuthorNote($content);
 
             // check for chapters in text
             $chapterPattern = '/(Chapter \d+)/i';
