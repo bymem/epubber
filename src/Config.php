@@ -3,6 +3,7 @@
 class Config
 {
     public readonly string $scanFolder;
+    public readonly string $workFolder;
     public readonly string $outputFolder;
     public readonly string $language;
 
@@ -11,9 +12,10 @@ class Config
         $env = $this->loadEnvFile($envFile);
 
         $scanFolder   = $this->resolvePath($projectRoot, $env['SCAN_FOLDER'] ?? 'stories');
-        $outputFolder = $this->resolvePath($projectRoot, $env['OUTPUT_FOLDER'] ?? 'temp');
+        $workFolder   = $this->resolvePath($projectRoot, $env['WORK_FOLDER'] ?? 'temp');
+        $outputFolder = $this->resolvePath($projectRoot, $env['OUTPUT_FOLDER'] ?? 'output');
 
-        [$this->scanFolder, $this->outputFolder] = $this->confirmPaths($scanFolder, $outputFolder);
+        [$this->scanFolder, $this->workFolder, $this->outputFolder] = $this->confirmPaths($scanFolder, $workFolder, $outputFolder);
         $this->language = $env['LANGUAGE'] ?? 'en';
     }
 
@@ -60,22 +62,25 @@ class Config
     }
 
     // Show the resolved folders and let the user override them for this run only (not persisted to .env)
-    private function confirmPaths(string $scanFolder, string $outputFolder): array
+    private function confirmPaths(string $scanFolder, string $workFolder, string $outputFolder): array
     {
         echo "Scan folder:   $scanFolder\n";
+        echo "Work folder:   $workFolder\n";
         echo "Output folder: $outputFolder\n";
 
         $answer = strtolower(Prompt::ask('Is this correct? [Y/n]: '));
 
         if ($answer === '' || $answer === 'y') {
-            return [$scanFolder, $outputFolder];
+            return [$scanFolder, $workFolder, $outputFolder];
         }
 
         $newScan   = Prompt::ask("Scan folder for this run [$scanFolder]: ");
+        $newWork   = Prompt::ask("Work folder for this run [$workFolder]: ");
         $newOutput = Prompt::ask("Output folder for this run [$outputFolder]: ");
 
         return [
             $newScan !== '' ? rtrim($newScan, '/') : $scanFolder,
+            $newWork !== '' ? rtrim($newWork, '/') : $workFolder,
             $newOutput !== '' ? rtrim($newOutput, '/') : $outputFolder,
         ];
     }

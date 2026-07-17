@@ -4,6 +4,7 @@ class EpubPackager
 {
     private array $stories;
     private string $scanFolder;
+    private string $workFolder;
     private string $outputFolder;
     private string $language;
     private string $projectRoot;
@@ -11,6 +12,7 @@ class EpubPackager
     public function __construct(Config $config, string $projectRoot)
     {
         $this->scanFolder   = $config->scanFolder;
+        $this->workFolder   = $config->workFolder;
         $this->outputFolder = $config->outputFolder;
         $this->language     = $config->language;
         $this->projectRoot  = $projectRoot;
@@ -21,6 +23,10 @@ class EpubPackager
 
         if (!class_exists('ZipArchive')) {
             throw new RuntimeException('The PHP zip extension is required (ZipArchive not found).');
+        }
+
+        if (!is_dir($this->workFolder)) {
+            mkdir($this->workFolder, 0777, true);
         }
 
         if (!is_dir($this->outputFolder)) {
@@ -82,7 +88,7 @@ class EpubPackager
     {
 
         // Create a fresh directory for the package, clearing out any leftovers from a previous run
-        $packageDir = $this->outputFolder . '/' . $name;
+        $packageDir = $this->workFolder . '/' . $name;
         if (is_dir($packageDir)) {
             $this->deleteDirectory($packageDir);
         }

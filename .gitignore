@@ -2,9 +2,13 @@
 .env
 .DS_Store
 
-# Build output — generated per run, not source
+# Scratch/work folder — generated per run, not source
 /temp/*
 !/temp/.gitkeep
+
+# Finished epub output — generated per run, not source
+/output/*
+!/output/.gitkeep
 
 # Story source text files are personal content, not part of the repo
 /stories/*
