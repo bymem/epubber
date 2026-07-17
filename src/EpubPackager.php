@@ -239,6 +239,47 @@ class EpubPackager
         return [$notice !== '' ? $notice : null, implode("\n", $remainingLines)];
     }
 
+    // Detect "Chapter"/"Part" headings — numeric ("Chapter 1") or spelled out ("Chapter
+    // One"), optionally followed by a name ("Part Two: The Reckoning") — and split the text
+    // into chapters at each one found. Only splits when at least two headings turn up;
+    // otherwise this returns an empty array as a signal to treat the whole text as one
+    // chapter. Compound number words (e.g. "twenty-one") aren't handled, just one..ninety.
+    private function splitIntoChapters(string $content): array
+    {
+        $numberWords = 'one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen'
+            . '|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty'
+            . '|sixty|seventy|eighty|ninety';
+
+        $pattern = '/^[ \t]*(?:chapter|part)\s+(?:\d+|' . $numberWords . ')\b[ \t:.\-\x{2013}\x{2014}]*[^\n]*/miu';
+
+        if (!preg_match_all($pattern, $content, $matches, PREG_OFFSET_CAPTURE) || count($matches[0]) < 2) {
+            return [];
+        }
+
+        $headings = $matches[0];
+        $headingCount = count($headings);
+        $chapters = [];
+
+        // Any text before the first heading becomes an untitled chapter (e.g. a prologue)
+        $leading = trim(substr($content, 0, $headings[0][1]));
+        if ($leading !== '') {
+            $chapters[] = ['title' => null, 'body' => $leading];
+        }
+
+        for ($i = 0; $i < $headingCount; $i++) {
+            [$headingText, $offset] = $headings[$i];
+            $bodyStart = $offset + strlen($headingText);
+            $bodyEnd = $i + 1 < $headingCount ? $headings[$i + 1][1] : strlen($content);
+
+            $chapters[] = [
+                'title' => trim($headingText),
+                'body'  => substr($content, $bodyStart, $bodyEnd - $bodyStart),
+            ];
+        }
+
+        return $chapters;
+    }
+
     // Create a dedicated first page for the author/copyright note, formatted as real paragraphs
     private function createNoticePage($packageDir, $title, $noteText): string
     {
@@ -320,51 +361,25 @@ class EpubPackager
             $content = file_get_contents($this->scanFolder . '/' . $file);
             [, $content] = $this->splitAuthorNote(explode("\n", $content));
 
-            // check for chapters in text
-            $chapterPattern = '/(Chapter \d+)/i';
+            // Look for "Chapter"/"Part" headings in the text; if there aren't at least two,
+            // treat the whole file as a single chapter instead
+            $chapters = $this->splitIntoChapters($content);
 
-            // Split the text based on the chapters found
-            $chapters = preg_split($chapterPattern, $content);
-
-            // make sure the first part is not empty
-            if (empty($chapters[0])) {
-                array_shift($chapters);
+            if (empty($chapters)) {
+                $chapters = [['title' => null, 'body' => $content]];
             }
 
             echo count($chapters) . " chapters found in $file\n";
-            // Create a new HTML file for each chapter
-            if ( count($chapters) > 2 ) {
 
-                foreach ($chapters as $index => $chapter) {
-                    // Create a new HTML file for each chapter
-                    $htmlCount++;
-
-                    $htmlFile = $packageDir . '/index_html_' . $htmlCount . '.html';
-                    $htmlFiles[] = $htmlFile;
-
-                    $htmlContent = '<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
-    <head>
-        <title>' . $title . '</title>
-        <link rel="stylesheet" type="text/css" href="style.css"/>
-    </head>
-    <body>
-        <div class="content">' . $this->wrapTextInParagraphs($chapter) . '</div>
-    </body>
-</html>';
-
-                    file_put_contents($htmlFile, $htmlContent);
-
-                }
-
-            } else {
-
-                // Create a new HTML file for the entire text
+            foreach ($chapters as $chapter) {
                 $htmlCount++;
 
                 $htmlFile = $packageDir . '/index_html_' . $htmlCount . '.html';
-                $htmlFiles[] = $htmlFile;
+                $htmlFiles[] = ['file' => $htmlFile, 'title' => $chapter['title']];
+
+                $heading = $chapter['title'] !== null
+                    ? '<h1>' . htmlspecialchars($chapter['title']) . "</h1>\n        "
+                    : '';
 
                 $htmlContent = '<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
@@ -374,7 +389,7 @@ class EpubPackager
         <link rel="stylesheet" type="text/css" href="style.css"/>
     </head>
     <body>
-        <div class="content">' . $this->wrapTextInParagraphs($content) . '</div>
+        <div class="content">' . $heading . $this->wrapTextInParagraphs($chapter['body']) . '</div>
     </body>
 </html>';
 
@@ -473,8 +488,8 @@ class EpubPackager
             $opfContent .= '        <item id="notice" href="' . basename($noticeFile) . '" media-type="application/xhtml+xml"/>' . "\n";
         }
 
-        foreach ($htmlFiles as $index => $file) {
-            $opfContent .= '        <item id="item' . ($index + 1) . '" href="' . basename($file) . '" media-type="application/xhtml+xml"/>'. "\n";
+        foreach ($htmlFiles as $index => $entry) {
+            $opfContent .= '        <item id="item' . ($index + 1) . '" href="' . basename($entry['file']) . '" media-type="application/xhtml+xml"/>'. "\n";
         }
 
         // Add the CSS file to the manifest
@@ -492,7 +507,7 @@ class EpubPackager
             $opfContent .= '        <itemref idref="notice"/>' . "\n";
         }
 
-        foreach ($htmlFiles as $index => $file) {
+        foreach ($htmlFiles as $index => $entry) {
             $opfContent .= '        <itemref idref="item' . ($index + 1) . '"/>' . "\n";
         }
 
@@ -570,13 +585,15 @@ class EpubPackager
 
         $count = 0;
 
-        foreach ($htmlFiles as $index => $file) {
+        foreach ($htmlFiles as $index => $entry) {
             $count++;
+            $label = $entry['title'] !== null ? $entry['title'] : 'Chapter ' . $count;
+
             $tocContent .= '    <navPoint id="navPoint-' . ($index + 1) . '" playOrder="' . $playOrder . '">
       <navLabel>
-        <text>Chapter ' . $count . '</text>
+        <text>' . htmlspecialchars($label) . '</text>
       </navLabel>
-      <content src="' . basename($file) . '"/>
+      <content src="' . basename($entry['file']) . '"/>
     </navPoint>' . "\n";
             $playOrder++;
         }
