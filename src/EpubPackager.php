@@ -693,23 +693,20 @@ class EpubPackager
         $height = imagesy($image);
 
         $maxWidth = (int) ($width * 0.85);
-        $maxHeight = (int) ($height * 0.85);
 
-        $fit = $this->fitTitleToCover($title, $font, $maxWidth, $maxHeight);
-
-        // Scaled down 30% from the fitted size, per request
-        $fontSize = $fit['fontSize'] * 0.7;
+        $fontSize = 18;
         $lineHeight = $fontSize * 1.3;
+        $lines = $this->wrapTitleText($title, $font, $fontSize, $maxWidth);
 
         $white = imagecolorallocate($image, 255, 255, 255);
         $black = imagecolorallocate($image, 0, 0, 0);
 
         // Center-center: vertically centered in the full image height, each line
         // individually centered horizontally
-        $blockHeight = $lineHeight * count($fit['lines']);
+        $blockHeight = $lineHeight * count($lines);
         $y = (($height - $blockHeight) / 2) + $fontSize;
 
-        foreach ($fit['lines'] as $line) {
+        foreach ($lines as $line) {
             $box = imagettfbbox($fontSize, 0, $font, $line);
             $lineWidth = $box[2] - $box[0];
             $x = ($width - $lineWidth) / 2;
@@ -748,26 +745,6 @@ class EpubPackager
         }
 
         return null;
-    }
-
-    // Word-wrap $title to fit within $maxWidth, then shrink the font size until the whole
-    // wrapped block also fits within $maxHeight (falls back to the smallest size tried).
-    private function fitTitleToCover(string $title, string $font, int $maxWidth, int $maxHeight): array
-    {
-        $minFontSize = 10;
-
-        for ($fontSize = (int) ($maxHeight / 5); $fontSize >= $minFontSize; $fontSize -= 2) {
-            $lines = $this->wrapTitleText($title, $font, $fontSize, $maxWidth);
-            $lineHeight = $fontSize * 1.3;
-
-            if ($lineHeight * count($lines) <= $maxHeight) {
-                return ['lines' => $lines, 'fontSize' => $fontSize, 'lineHeight' => $lineHeight];
-            }
-        }
-
-        $lines = $this->wrapTitleText($title, $font, $minFontSize, $maxWidth);
-
-        return ['lines' => $lines, 'fontSize' => $minFontSize, 'lineHeight' => $minFontSize * 1.3];
     }
 
     // Simple greedy word-wrap, measuring each candidate line with the actual font/size
