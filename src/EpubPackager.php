@@ -103,12 +103,18 @@ class EpubPackager
                 $tags = $this->promptForTags();
             }
 
+            // Author/copyright note between the first pair of "----" separators becomes its
+            // own dedicated first page, separate from chapter 1 — some e-readers only start
+            // tracking reading progress once you've moved past the first spine item, so
+            // lumping it in with real chapter 1 content was breaking that.
+            $authorNote = $this->detectAuthorNote($storyLines);
+
             $uuid = $this->generateUUID();
 
             echo "Building package for series '$title'...\n";
             echo "Description: $description\n";
 
-            $this->buildPackage($name, $title, $description, $tags, $uuid, $txtFiles);
+            $this->buildPackage($name, $title, $description, $tags, $authorNote, $uuid, $txtFiles);
 
         }
 
@@ -196,7 +202,57 @@ class EpubPackager
         return array_values(array_filter($tags, fn($tag) => $tag !== ''));
     }
 
-    private function buildPackage($name, $title, $description, $tags, $uuid, $files)
+    // Look for an author/copyright note sitting between the FIRST pair of "----" style
+    // separators (as opposed to detectTitle(), which looks after the LAST one).
+    private function detectAuthorNote(array $lines): ?string
+    {
+        $firstSeparator = null;
+        $secondSeparator = null;
+
+        foreach ($lines as $index => $line) {
+            if (preg_match('/^-{3,}\s*$/', trim($line))) {
+                if ($firstSeparator === null) {
+                    $firstSeparator = $index;
+                } else {
+                    $secondSeparator = $index;
+                    break;
+                }
+            }
+        }
+
+        if ($firstSeparator === null || $secondSeparator === null) {
+            return null;
+        }
+
+        $noteLines = array_slice($lines, $firstSeparator + 1, $secondSeparator - $firstSeparator - 1);
+        $note = trim(implode('', $noteLines));
+
+        return $note !== '' ? $note : null;
+    }
+
+    // Create a dedicated first page for the author/copyright note, formatted as real paragraphs
+    private function createNoticePage($packageDir, $title, $noteText): string
+    {
+        $noticeFile = $packageDir . '/000_notice.html';
+
+        $htmlContent = '<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+    <head>
+        <title>' . $title . '</title>
+        <link rel="stylesheet" type="text/css" href="style.css"/>
+    </head>
+    <body>
+        <div class="content">' . $this->wrapTextInParagraphs($noteText) . '</div>
+    </body>
+</html>';
+
+        file_put_contents($noticeFile, $htmlContent);
+
+        return $noticeFile;
+    }
+
+    private function buildPackage($name, $title, $description, $tags, $authorNote, $uuid, $files)
     {
 
         // Create a fresh directory for the package, clearing out any leftovers from a previous run
@@ -211,9 +267,11 @@ class EpubPackager
         $this->createStylesheet($packageDir);
         $this->copyThumbnail($packageDir);
 
+        $noticeFile = $authorNote !== null ? $this->createNoticePage($packageDir, $title, $authorNote) : null;
+
         $htmlfiles = $this->exportTextToHTML($packageDir, $title, $description, $files);
-        $this->createTOC($packageDir, $title, $description, $uuid, $htmlfiles);
-        $this->createOPF($packageDir, $title, $description, $tags, $uuid, $htmlfiles);
+        $this->createTOC($packageDir, $title, $description, $uuid, $htmlfiles, $noticeFile);
+        $this->createOPF($packageDir, $title, $description, $tags, $uuid, $htmlfiles, $noticeFile);
 
         $this->createEPUB($packageDir, $title);
 
@@ -374,7 +432,7 @@ class EpubPackager
 
 
     // crate the OPF file
-    private function createOPF($packageDir, $title, $description, $tags, $uuid, $htmlFiles)
+    private function createOPF($packageDir, $title, $description, $tags, $uuid, $htmlFiles, $noticeFile = null)
     {
 
         // remove empty line from the description
@@ -401,6 +459,10 @@ class EpubPackager
     <manifest>
 ';
 
+        if ($noticeFile !== null) {
+            $opfContent .= '        <item id="notice" href="' . basename($noticeFile) . '" media-type="application/xhtml+xml"/>' . "\n";
+        }
+
         foreach ($htmlFiles as $index => $file) {
             $opfContent .= '        <item id="item' . ($index + 1) . '" href="' . basename($file) . '" media-type="application/xhtml+xml"/>'. "\n";
         }
@@ -413,6 +475,12 @@ class EpubPackager
         $opfContent .= '    </manifest>
     <spine toc="ncx">
 ';
+
+        // The notice page (if any) leads the spine, so it acts as the book's cover/front
+        // matter rather than being counted as part of chapter 1
+        if ($noticeFile !== null) {
+            $opfContent .= '        <itemref idref="notice"/>' . "\n";
+        }
 
         foreach ($htmlFiles as $index => $file) {
             $opfContent .= '        <itemref idref="item' . ($index + 1) . '"/>' . "\n";
@@ -460,7 +528,7 @@ class EpubPackager
     }
 
     // create TOC file
-    private function createTOC($packageDir, $title, $description, $uuid, $htmlFiles)
+    private function createTOC($packageDir, $title, $description, $uuid, $htmlFiles, $noticeFile = null)
     {
         $tocContent = '<?xml version="1.0" encoding="utf-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="en-US">
@@ -477,16 +545,30 @@ class EpubPackager
   <navMap>
 ';
 
+        $playOrder = 1;
+
+        // The notice page gets its own nav label rather than being counted as "Chapter 1"
+        if ($noticeFile !== null) {
+            $tocContent .= '    <navPoint id="navPoint-notice" playOrder="' . $playOrder . '">
+      <navLabel>
+        <text>Author\'s Note</text>
+      </navLabel>
+      <content src="' . basename($noticeFile) . '"/>
+    </navPoint>' . "\n";
+            $playOrder++;
+        }
+
         $count = 0;
 
         foreach ($htmlFiles as $index => $file) {
             $count++;
-            $tocContent .= '    <navPoint id="navPoint-' . ($index + 1) . '" playOrder="' . ($index + 1) . '">
+            $tocContent .= '    <navPoint id="navPoint-' . ($index + 1) . '" playOrder="' . $playOrder . '">
       <navLabel>
         <text>Chapter ' . $count . '</text>
       </navLabel>
       <content src="' . basename($file) . '"/>
     </navPoint>' . "\n";
+            $playOrder++;
         }
 
         $tocContent .= '  </navMap>
