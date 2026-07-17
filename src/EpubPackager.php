@@ -694,7 +694,7 @@ class EpubPackager
 
         $maxWidth = (int) ($width * 0.85);
 
-        $fontSize = 18;
+        $fontSize = 48;
         $lineHeight = $fontSize * 1.3;
         $lines = $this->wrapTitleText($title, $font, $fontSize, $maxWidth);
 
