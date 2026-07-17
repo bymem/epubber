@@ -77,15 +77,38 @@ class EpubPackager
             $titleInput = Prompt::ask($titlePrompt);
             $title = $titleInput !== '' ? $titleInput : ($detectedTitle ?? $name);
 
-            // Collect multiline description
-            $description = Prompt::askMultiline("Enter description for series '$title' (end with an empty line):");
+            // Try to detect a description between the first two "***" markers, and any
+            // (comma, separated, tags) living inside it
+            $detectedDescription = $this->detectDescription($storyLines);
+            $tags = [];
+
+            if ($detectedDescription !== null) {
+                $tags = $this->extractTags($detectedDescription);
+
+                echo "Detected description for '$title':\n$detectedDescription\n";
+                if (!empty($tags)) {
+                    echo 'Detected tags: ' . implode(', ', $tags) . "\n";
+                }
+
+                $useDetected = strtolower(Prompt::ask('Use this description? [Y/n]: '));
+
+                if ($useDetected === '' || $useDetected === 'y') {
+                    $description = $detectedDescription . "\n";
+                } else {
+                    $description = Prompt::askMultiline("Enter description for series '$title' (end with an empty line):");
+                    $tags = $this->promptForTags();
+                }
+            } else {
+                $description = Prompt::askMultiline("Enter description for series '$title' (end with an empty line):");
+                $tags = $this->promptForTags();
+            }
 
             $uuid = $this->generateUUID();
 
             echo "Building package for series '$title'...\n";
             echo "Description: $description\n";
 
-            $this->buildPackage($name, $title, $description, $uuid, $txtFiles);
+            $this->buildPackage($name, $title, $description, $tags, $uuid, $txtFiles);
 
         }
 
@@ -106,7 +129,53 @@ class EpubPackager
         return null;
     }
 
-    private function buildPackage($name, $title, $description, $uuid, $files)
+    // Look for a description sitting between the first two "***" markers in the opening lines.
+    // Story text files aren't consistently formatted, so this is a best-effort guess only.
+    private function detectDescription(array $lines): ?string
+    {
+        $text = implode('', $lines);
+        $parts = explode('***', $text, 3);
+
+        if (count($parts) < 3) {
+            return null;
+        }
+
+        $description = trim($parts[1]);
+
+        return $description !== '' ? $description : null;
+    }
+
+    // Pull a (comma, separated, tag list) out of a parenthesised group in the description,
+    // and strip it from the description text since it's now recorded separately.
+    private function extractTags(string &$description): array
+    {
+        if (!preg_match('/\(([^()]+)\)/', $description, $matches)) {
+            return [];
+        }
+
+        $tags = array_map('trim', explode(',', $matches[1]));
+        $tags = array_filter($tags, fn($tag) => $tag !== '');
+
+        $description = trim(str_replace($matches[0], '', $description));
+
+        return array_values($tags);
+    }
+
+    // Ask for tags manually when none could be detected from the text
+    private function promptForTags(): array
+    {
+        $input = Prompt::ask('Enter tags (comma separated), or leave blank: ');
+
+        if ($input === '') {
+            return [];
+        }
+
+        $tags = array_map('trim', explode(',', $input));
+
+        return array_values(array_filter($tags, fn($tag) => $tag !== ''));
+    }
+
+    private function buildPackage($name, $title, $description, $tags, $uuid, $files)
     {
 
         // Create a fresh directory for the package, clearing out any leftovers from a previous run
@@ -123,7 +192,7 @@ class EpubPackager
 
         $htmlfiles = $this->exportTextToHTML($packageDir, $title, $description, $files);
         $this->createTOC($packageDir, $title, $description, $uuid, $htmlfiles);
-        $this->createOPF($packageDir, $title, $description, $uuid, $htmlfiles);
+        $this->createOPF($packageDir, $title, $description, $tags, $uuid, $htmlfiles);
 
         $this->createEPUB($packageDir, $title);
 
@@ -284,7 +353,7 @@ class EpubPackager
 
 
     // crate the OPF file
-    private function createOPF($packageDir, $title, $description, $uuid, $htmlFiles)
+    private function createOPF($packageDir, $title, $description, $tags, $uuid, $htmlFiles)
     {
 
         // remove empty line from the description
@@ -298,7 +367,15 @@ class EpubPackager
         <dc:description>' . htmlspecialchars($description) . '</dc:description>
         <dc:identifier id="BookId">' . $uuid . '</dc:identifier>
         <dc:language>' . htmlspecialchars($this->language) . '</dc:language>
-        <meta name="cover" content="thumbnail.jpg"/>
+';
+
+        // Tags are represented in the OPF as dc:subject entries — this is what Calibre and
+        // most readers display as "Tags"
+        foreach ($tags as $tag) {
+            $opfContent .= '        <dc:subject>' . htmlspecialchars($tag) . '</dc:subject>' . "\n";
+        }
+
+        $opfContent .= '        <meta name="cover" content="thumbnail.jpg"/>
     </metadata>
     <manifest>
 ';
