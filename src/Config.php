@@ -6,6 +6,7 @@ class Config
     public readonly string $workFolder;
     public readonly string $outputFolder;
     public readonly string $language;
+    public readonly ?string $coverFont;
 
     public function __construct(string $projectRoot, string $envFile)
     {
@@ -17,6 +18,12 @@ class Config
 
         [$this->scanFolder, $this->workFolder, $this->outputFolder] = $this->confirmPaths($scanFolder, $workFolder, $outputFolder);
         $this->language = $env['LANGUAGE'] ?? 'en';
+
+        // Optional: a .ttf file used to draw the title onto the cover. If unset, EpubPackager
+        // falls back to searching a few common system font locations.
+        $this->coverFont = isset($env['COVER_FONT']) && $env['COVER_FONT'] !== ''
+            ? $this->resolvePath($projectRoot, $env['COVER_FONT'])
+            : null;
     }
 
     // Small built-in KEY=VALUE parser, no need for an external dependency for this

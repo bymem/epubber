@@ -8,6 +8,7 @@ class EpubPackager
     private string $outputFolder;
     private string $language;
     private string $projectRoot;
+    private ?string $coverFont;
 
     public function __construct(Config $config, string $projectRoot)
     {
@@ -16,6 +17,7 @@ class EpubPackager
         $this->outputFolder = $config->outputFolder;
         $this->language     = $config->language;
         $this->projectRoot  = $projectRoot;
+        $this->coverFont    = $config->coverFont;
 
         if (!is_dir($this->scanFolder) || !is_readable($this->scanFolder)) {
             throw new RuntimeException("Scan folder not found or not readable: {$this->scanFolder}");
@@ -316,6 +318,7 @@ class EpubPackager
         $this->createMetaInf($packageDir);
         $this->createStylesheet($packageDir);
         $this->copyThumbnail($packageDir);
+        $this->drawCoverTitle($packageDir, $title);
 
         $noticeFile = $authorNote !== null ? $this->createNoticePage($packageDir, $title, $authorNote) : null;
 
@@ -651,6 +654,149 @@ class EpubPackager
         } else {
             echo "Thumbnail image not found.\n";
         }
+    }
+
+    // Draw the book title onto thumbnail.jpg to use as a generated cover. Best-effort only:
+    // if GD isn't available, no usable font can be found, or the thumbnail can't be read,
+    // this just leaves the plain thumbnail in place instead of failing the whole build.
+    private function drawCoverTitle($packageDir, $title): void
+    {
+        if (!extension_loaded('gd')) {
+            echo "GD extension not available — using plain thumbnail without cover text.\n";
+            return;
+        }
+
+        $coverFile = $packageDir . '/thumbnail.jpg';
+
+        if (!file_exists($coverFile)) {
+            return;
+        }
+
+        $font = $this->resolveCoverFont();
+
+        if ($font === null) {
+            echo "No .ttf font found for cover text (set COVER_FONT in .env) — using plain thumbnail.\n";
+            return;
+        }
+
+        $image = @imagecreatefromjpeg($coverFile);
+
+        if ($image === false) {
+            echo "Could not read thumbnail.jpg as a JPEG — using plain thumbnail without cover text.\n";
+            return;
+        }
+
+        $width = imagesx($image);
+        $height = imagesy($image);
+
+        $maxWidth = (int) ($width * 0.85);
+        $maxHeight = (int) ($height * 0.35);
+
+        $fit = $this->fitTitleToCover($title, $font, $maxWidth, $maxHeight);
+
+        $white = imagecolorallocate($image, 255, 255, 255);
+        $black = imagecolorallocate($image, 0, 0, 0);
+
+        $blockHeight = $fit['lineHeight'] * count($fit['lines']);
+        $y = $height - $maxHeight + (($maxHeight - $blockHeight) / 2) + $fit['fontSize'];
+
+        foreach ($fit['lines'] as $line) {
+            $box = imagettfbbox($fit['fontSize'], 0, $font, $line);
+            $lineWidth = $box[2] - $box[0];
+            $x = ($width - $lineWidth) / 2;
+
+            $this->drawOutlinedText($image, $fit['fontSize'], $x, $y, $black, $white, $font, $line);
+
+            $y += $fit['lineHeight'];
+        }
+
+        imagejpeg($image, $coverFile, 90);
+        imagedestroy($image);
+
+        echo "Cover text drawn using $font.\n";
+    }
+
+    // Look for a usable font: the configured COVER_FONT first, then a few common system
+    // locations across macOS and Linux.
+    private function resolveCoverFont(): ?string
+    {
+        if ($this->coverFont !== null && file_exists($this->coverFont)) {
+            return $this->coverFont;
+        }
+
+        $candidates = [
+            '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
+            '/Library/Fonts/Arial Bold.ttf',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+            '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
+            '/usr/share/fonts/TTF/DejaVuSans-Bold.ttf',
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (file_exists($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    // Word-wrap $title to fit within $maxWidth, then shrink the font size until the whole
+    // wrapped block also fits within $maxHeight (falls back to the smallest size tried).
+    private function fitTitleToCover(string $title, string $font, int $maxWidth, int $maxHeight): array
+    {
+        $minFontSize = 10;
+
+        for ($fontSize = (int) ($maxHeight / 5); $fontSize >= $minFontSize; $fontSize -= 2) {
+            $lines = $this->wrapTitleText($title, $font, $fontSize, $maxWidth);
+            $lineHeight = $fontSize * 1.3;
+
+            if ($lineHeight * count($lines) <= $maxHeight) {
+                return ['lines' => $lines, 'fontSize' => $fontSize, 'lineHeight' => $lineHeight];
+            }
+        }
+
+        $lines = $this->wrapTitleText($title, $font, $minFontSize, $maxWidth);
+
+        return ['lines' => $lines, 'fontSize' => $minFontSize, 'lineHeight' => $minFontSize * 1.3];
+    }
+
+    // Simple greedy word-wrap, measuring each candidate line with the actual font/size
+    private function wrapTitleText(string $title, string $font, int $fontSize, int $maxWidth): array
+    {
+        $words = preg_split('/\s+/', trim($title));
+        $lines = [];
+        $currentLine = '';
+
+        foreach ($words as $word) {
+            $candidate = $currentLine === '' ? $word : $currentLine . ' ' . $word;
+            $box = imagettfbbox($fontSize, 0, $font, $candidate);
+            $candidateWidth = $box[2] - $box[0];
+
+            if ($candidateWidth > $maxWidth && $currentLine !== '') {
+                $lines[] = $currentLine;
+                $currentLine = $word;
+            } else {
+                $currentLine = $candidate;
+            }
+        }
+
+        if ($currentLine !== '') {
+            $lines[] = $currentLine;
+        }
+
+        return $lines;
+    }
+
+    // Draw text with a simple black outline behind it, so it stays legible over whatever
+    // artwork happens to be on the thumbnail
+    private function drawOutlinedText($image, $fontSize, $x, $y, $outlineColor, $textColor, $font, $line): void
+    {
+        foreach ([[-1, -1], [-1, 1], [1, -1], [1, 1], [0, -1], [0, 1], [-1, 0], [1, 0]] as [$dx, $dy]) {
+            imagettftext($image, $fontSize, 0, $x + $dx, $y + $dy, $outlineColor, $font, $line);
+        }
+
+        imagettftext($image, $fontSize, 0, $x, $y, $textColor, $font, $line);
     }
 
     // Create stylesheet
