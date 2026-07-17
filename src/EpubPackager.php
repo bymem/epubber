@@ -813,6 +813,11 @@ class EpubPackager
     // artwork happens to be on the thumbnail
     private function drawOutlinedText($image, $fontSize, $x, $y, $outlineColor, $textColor, $font, $line): void
     {
+        // imagettftext() takes int $x/$y, but callers compute these via division — round
+        // explicitly here instead of relying on implicit float->int conversion
+        $x = (int) round($x);
+        $y = (int) round($y);
+
         foreach ([[-1, -1], [-1, 1], [1, -1], [1, 1], [0, -1], [0, 1], [-1, 0], [1, 0]] as [$dx, $dy]) {
             imagettftext($image, $fontSize, 0, $x + $dx, $y + $dy, $outlineColor, $font, $line);
         }
