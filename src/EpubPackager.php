@@ -693,24 +693,30 @@ class EpubPackager
         $height = imagesy($image);
 
         $maxWidth = (int) ($width * 0.85);
-        $maxHeight = (int) ($height * 0.35);
+        $maxHeight = (int) ($height * 0.85);
 
         $fit = $this->fitTitleToCover($title, $font, $maxWidth, $maxHeight);
+
+        // Scaled down 30% from the fitted size, per request
+        $fontSize = $fit['fontSize'] * 0.7;
+        $lineHeight = $fontSize * 1.3;
 
         $white = imagecolorallocate($image, 255, 255, 255);
         $black = imagecolorallocate($image, 0, 0, 0);
 
-        $blockHeight = $fit['lineHeight'] * count($fit['lines']);
-        $y = $height - $maxHeight + (($maxHeight - $blockHeight) / 2) + $fit['fontSize'];
+        // Center-center: vertically centered in the full image height, each line
+        // individually centered horizontally
+        $blockHeight = $lineHeight * count($fit['lines']);
+        $y = (($height - $blockHeight) / 2) + $fontSize;
 
         foreach ($fit['lines'] as $line) {
-            $box = imagettfbbox($fit['fontSize'], 0, $font, $line);
+            $box = imagettfbbox($fontSize, 0, $font, $line);
             $lineWidth = $box[2] - $box[0];
             $x = ($width - $lineWidth) / 2;
 
-            $this->drawOutlinedText($image, $fit['fontSize'], $x, $y, $black, $white, $font, $line);
+            $this->drawOutlinedText($image, $fontSize, $x, $y, $black, $white, $font, $line);
 
-            $y += $fit['lineHeight'];
+            $y += $lineHeight;
         }
 
         imagejpeg($image, $coverFile, 90);
