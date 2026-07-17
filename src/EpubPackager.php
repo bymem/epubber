@@ -442,7 +442,7 @@ class EpubPackager
             }
 
             // Return the combined result (before *** part with <br>, and after wrapped in <p>)
-            return $beforeParagraphs . "<hr>" . $afterParagraphs;
+            return $beforeParagraphs . "<hr/>" . $afterParagraphs;
         } else {
             // If no *** pattern is found, wrap all the text in <p> tags
             $paragraphs = preg_split('/\n\n+/', $text);
