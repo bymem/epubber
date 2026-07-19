@@ -62,6 +62,7 @@ class EpubPackager
             // Then prompt the user for name and description
             $storyFile = $this->scanFolder . '/' . $txtFiles[0];
             $storyLines = file($storyFile);
+            $storyLines = array_map([$this, 'toUtf8'], $storyLines);
             $storyLines = array_slice($storyLines, 0, 100); // Get first 100 lines
             echo "First few lines of $txtFiles[0]:\n";
             foreach ($storyLines as $line) {
@@ -137,6 +138,20 @@ class EpubPackager
 
         }
 
+    }
+
+    // These old .txt files are often Windows-1252/Latin-1 rather than UTF-8 — a curly quote
+    // or apostrophe in that encoding becomes an invalid byte once embedded in a document
+    // declared UTF-8, which readers show as "�". Convert to UTF-8 if it isn't already.
+    private function toUtf8(string $text): string
+    {
+        if (!function_exists('mb_check_encoding') || mb_check_encoding($text, 'UTF-8')) {
+            return $text;
+        }
+
+        $encoding = mb_detect_encoding($text, ['UTF-8', 'Windows-1252', 'ISO-8859-1'], true);
+
+        return mb_convert_encoding($text, 'UTF-8', $encoding !== false ? $encoding : 'Windows-1252');
     }
 
     // Look for a "Title:"-style label in the opening lines to suggest as a prefill.
@@ -398,6 +413,7 @@ class EpubPackager
         foreach ($textFiles as $file) {
 
             $content = file_get_contents($this->scanFolder . '/' . $file);
+            $content = $this->toUtf8($content);
             [, $content] = $this->splitAuthorNote(explode("\n", $content));
 
             // Look for "Chapter"/"Part" headings in the text; if there aren't at least two,
